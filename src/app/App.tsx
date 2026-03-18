@@ -1,6 +1,17 @@
 import { useState, useEffect } from 'react';
 import { Edit2, Trash2, Save, X } from 'lucide-react';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import {
+  collection,
+  onSnapshot,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  doc,
+  serverTimestamp,
+  query,
+  orderBy,
+} from 'firebase/firestore';
+import { db } from '../lib/firebase';
 
 interface BuffetEntry {
   id: string;
@@ -9,8 +20,6 @@ interface BuffetEntry {
   createdAt: string;
   updatedAt?: string;
 }
-
-const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-99a48398`;
 
 export default function App() {
   const [entries, setEntries] = useState<BuffetEntry[]>([]);
@@ -21,114 +30,89 @@ export default function App() {
   const [editName, setEditName] = useState('');
   const [editDish, setEditDish] = useState('');
 
-  // Fetch entries
-  const fetchEntries = async () => {
-    try {
-      const response = await fetch(`${API_BASE}/entries`, {
-        headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
-        },
-      });
-      const data = await response.json();
-      if (data.entries) {
-        setEntries(data.entries);
-      }
-    } catch (error) {
-      console.error('Fehler beim Laden der Einträge:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // Echtzeit-Listener für Firestore
   useEffect(() => {
-    fetchEntries();
+    const q = query(collection(db, 'buffet_entries'), orderBy('createdAt', 'asc'));
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const data: BuffetEntry[] = snapshot.docs.map((docSnap) => {
+          const d = docSnap.data();
+          return {
+            id: docSnap.id,
+            name: d.name,
+            dish: d.dish,
+            createdAt: d.createdAt?.toDate?.()?.toISOString() ?? '',
+            updatedAt: d.updatedAt?.toDate?.()?.toISOString(),
+          };
+        });
+        setEntries(data);
+        setLoading(false);
+      },
+      (error) => {
+        console.error('Fehler beim Laden der Einträge:', error);
+        setLoading(false);
+      }
+    );
+    return () => unsubscribe();
   }, []);
 
-  // Add new entry
+  // Neuen Eintrag hinzufügen
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !dish.trim()) return;
 
     try {
-      const response = await fetch(`${API_BASE}/entries`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`,
-        },
-        body: JSON.stringify({ name: name.trim(), dish: dish.trim() }),
+      await addDoc(collection(db, 'buffet_entries'), {
+        name: name.trim(),
+        dish: dish.trim(),
+        createdAt: serverTimestamp(),
       });
-
-      if (response.ok) {
-        setName('');
-        setDish('');
-        await fetchEntries();
-      } else {
-        console.error('Fehler beim Hinzufügen:', await response.json());
-      }
+      setName('');
+      setDish('');
     } catch (error) {
       console.error('Fehler beim Hinzufügen:', error);
     }
   };
 
-  // Start editing
+  // Bearbeitung starten
   const startEdit = (entry: BuffetEntry) => {
     setEditingId(entry.id);
     setEditName(entry.name);
     setEditDish(entry.dish);
   };
 
-  // Cancel editing
+  // Bearbeitung abbrechen
   const cancelEdit = () => {
     setEditingId(null);
     setEditName('');
     setEditDish('');
   };
 
-  // Save edit
+  // Eintrag speichern
   const handleEdit = async (id: string) => {
     if (!editName.trim() || !editDish.trim()) return;
 
     try {
-      const response = await fetch(`${API_BASE}/entries/${id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`,
-        },
-        body: JSON.stringify({ name: editName.trim(), dish: editDish.trim() }),
+      await updateDoc(doc(db, 'buffet_entries', id), {
+        name: editName.trim(),
+        dish: editDish.trim(),
+        updatedAt: serverTimestamp(),
       });
-
-      if (response.ok) {
-        setEditingId(null);
-        setEditName('');
-        setEditDish('');
-        await fetchEntries();
-      } else {
-        console.error('Fehler beim Bearbeiten:', await response.json());
-      }
+      setEditingId(null);
+      setEditName('');
+      setEditDish('');
     } catch (error) {
       console.error('Fehler beim Bearbeiten:', error);
     }
   };
 
-  // Delete entry
+  // Eintrag löschen
   const handleDelete = async (id: string) => {
     if (!confirm('Möchten Sie diesen Eintrag wirklich löschen?')) return;
 
     try {
-      const response = await fetch(`${API_BASE}/entries/${id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
-        },
-      });
-
-      if (response.ok) {
-        await fetchEntries();
-      } else {
-        console.error('Fehler beim Löschen:', await response.json());
-      }
+      await deleteDoc(doc(db, 'buffet_entries', id));
     } catch (error) {
       console.error('Fehler beim Löschen:', error);
     }
